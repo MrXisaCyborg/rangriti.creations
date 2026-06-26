@@ -504,140 +504,108 @@
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkZ2Z2emRueWxvZXN4dHFidnhlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIzMDc1MzEsImV4cCI6MjA5Nzg4MzUzMX0.idvX60coqFAYttHlR43DUKNtpkr0YgZxcquCZF9F1ao';
         
         // --- Database Handler ---
-        const useSupabase = SUPABASE_URL.startsWith('http');
-        let supabaseClient = null;
-        if (useSupabase) {
-            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const useSupabase = SUPABASE_URL.startsWith('http');
+    let supabaseClient = null;
+    if (useSupabase) {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }
+
+    const DB = {
+        async loadOrders() {
+            if (useSupabase) {
+                const { data, error } = await supabaseClient.from('orders').select('*').order('createdAt', { ascending: false });
+                if (error) throw new Error(error.message);
+                return data || [];
+            } else {
+                const localData = localStorage.getItem('rr-creations-orders');
+                return localData ? JSON.parse(localData) : [];
+            }
+        },
+        async addOrder(order) {
+            if (useSupabase) {
+                // IMPORTANT: We do not include an ID here. 
+                // The database schema must have a default value for 'id' (e.g., gen_random_uuid())
+                const { data, error } = await supabaseClient.from('orders').insert([order]).select();
+                if (error) throw new Error(error.message);
+                return data[0];
+            } else {
+                const orders = await this.loadOrders();
+                order.id = crypto.randomUUID(); // Only generate ID for local storage
+                orders.unshift(order);
+                localStorage.setItem('rr-creations-orders', JSON.stringify(orders));
+                return order;
+            }
+        },
+        async updateOrder(id, updates) {
+            if (useSupabase) {
+                const { error } = await supabaseClient.from('orders').update(updates).eq('id', id);
+                if (error) throw error;
+            } else {
+                let orders = await this.loadOrders();
+                const index = orders.findIndex(o => o.id === id);
+                if(index > -1) {
+                    orders[index] = { ...orders[index], ...updates };
+                    localStorage.setItem('rr-creations-orders', JSON.stringify(orders));
+                }
+            }
+        },
+        async deleteOrder(id) {
+            if (useSupabase) {
+                const { error } = await supabaseClient.from('orders').delete().eq('id', id);
+                if (error) throw error;
+            } else {
+                let orders = await this.loadOrders();
+                orders = orders.filter(o => o.id !== id);
+                localStorage.setItem('rr-creations-orders', JSON.stringify(orders));
+            }
+        }
+    };
+
+    // --- Updated addOrder function ---
+    const addOrder = async (e) => {
+        e.preventDefault();
+        
+        const costPrice = parseFloat(costPriceInput.value) || 0;
+        const sellingPrice = parseFloat(sellingPriceInput.value) || 0;
+        const supplierDiscount = parseFloat(supplierDiscountInput.value) || 0;
+        const customerDiscount = parseFloat(customerDiscountInput.value) || 0;
+        
+        const finalCostPrice = costPrice - supplierDiscount;
+        const finalSellingPrice = sellingPrice - customerDiscount;
+
+        if (finalSellingPrice < finalCostPrice) { 
+            showMessageModal('Invalid Pricing', 'Final selling price cannot be less than the final cost.'); 
+            return; 
         }
 
-        const DB = {
-            async loadOrders() {
-                if (useSupabase) {
-                    const { data, error } = await supabaseClient.from('orders').select('*').order('createdAt', { ascending: false });
-                    if (error) {
-                        console.error("Supabase load Error:", error);
-                        throw new Error(error.message || "Failed to load from Supabase");
-                    }
-                    return data || [];
-                } else {
-                    const localData = localStorage.getItem('rr-creations-orders');
-                    return localData ? JSON.parse(localData) : [];
-                }
-            },
-            async addOrder(order) {
-                if (useSupabase) {
-                    const { data, error } = await supabaseClient.from('orders').insert([order]).select();
-                    if (error) {
-                        console.error("Supabase Insert Error:", error);
-                        throw new Error(error.message || "Failed to insert into Supabase");
-                    }
-                    return data[0];
-                } else {
-                    const orders = await this.loadOrders();
-                    orders.unshift(order);
-                    localStorage.setItem('rr-creations-orders', JSON.stringify(orders));
-                    return order;
-                }
-            },
-            async updateOrder(id, updates) {
-                if (useSupabase) {
-                    const { error } = await supabaseClient.from('orders').update(updates).eq('id', id);
-                    if (error) throw error;
-                } else {
-                    let orders = await this.loadOrders();
-                    const index = orders.findIndex(o => o.id === id);
-                    if(index > -1) {
-                        orders[index] = { ...orders[index], ...updates };
-                        localStorage.setItem('rr-creations-orders', JSON.stringify(orders));
-                    }
-                }
-            },
-            async deleteOrder(id) {
-                if (useSupabase) {
-                    const { error } = await supabaseClient.from('orders').delete().eq('id', id);
-                    if (error) throw error;
-                } else {
-                    let orders = await this.loadOrders();
-                    orders = orders.filter(o => o.id !== id);
-                    localStorage.setItem('rr-creations-orders', JSON.stringify(orders));
-                }
-            }
+        const newOrder = {
+            customerName: customerNameInput.value.trim(), 
+            itemDescription: itemDescriptionInput.value.trim(), 
+            vendorName: vendorNameInput.value.trim(), 
+            costPrice, 
+            sellingPrice, 
+            discount: supplierDiscount,
+            finalCostPrice, 
+            profit: finalSellingPrice - finalCostPrice, 
+            paymentMethod: paymentMethodInput.value, 
+            status: 'pending', 
+            createdAt: new Date().toISOString(), 
+            isArchived: false,
         };
 
-        // --- App State & Elements ---
-        const { jsPDF } = window.jspdf;
-        let allOrders = []; 
-        let itemToModifyId = null;
-        let currentModifyAction = null;
-        let currentFilter = 'all'; 
-
-        const orderForm = document.getElementById('order-form');
-        const customerNameInput = document.getElementById('customer-name');
-        const itemDescriptionInput = document.getElementById('item-description');
-        const vendorNameInput = document.getElementById('vendor-name');
-        const costPriceInput = document.getElementById('cost-price');
-        const sellingPriceInput = document.getElementById('selling-price');
-        const supplierDiscountInput = document.getElementById('supplier-discount');
-        const customerDiscountInput = document.getElementById('customer-discount');
-        const paymentMethodInput = document.getElementById('payment-method');
-        
-        const orderList = document.getElementById('order-list');
-        const totalPendingEl = document.getElementById('total-pending');
-        const totalReceivedEl = document.getElementById('total-received');
-        const loader = document.getElementById('loader');
-
-        // --- Utility Functions ---
-        const formatCurrency = (num) => {
-            return (num || 0).toLocaleString('en-IN', {
-                style: 'currency', currency: 'INR', minimumFractionDigits: 2
-            });
-        };
-        
-        const showLoader = () => loader.style.display = 'flex';
-        const hideLoader = () => loader.style.display = 'none';
-
-        const showToast = (message, type = 'success') => {
-            const existing = document.querySelector('.toast');
-            if (existing) existing.remove();
-
-            const toast = document.createElement('div');
-            toast.className = `toast ${type === 'success' ? 'toast-success' : 'toast-error'}`;
-            toast.innerHTML = `
-                <i data-feather="${type === 'success' ? 'check-circle' : 'alert-circle'}" class="w-5 h-5"></i>
-                <span class="font-medium">${message}</span>
-            `;
-            document.body.appendChild(toast);
-            if(window.feather) feather.replace();
-
-            // Trigger reflow
-            void toast.offsetWidth;
-            toast.classList.add('show');
-
-            setTimeout(() => {
-                toast.classList.remove('show');
-                setTimeout(() => toast.remove(), 400);
-            }, 3000);
-        };
-
-        // --- Core Application Logic ---
-        const refreshData = async () => {
-            try {
-                showLoader();
-                allOrders = await DB.loadOrders();
-                // Normalize dates for sorting locally if needed
-                allOrders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-                
-                renderOrders();
-                updateTotals();
-                calculateMonthlyRecap();
-            } catch (error) {
-                console.error("Fetch Error:", error);
-                showToast(`Failed to sync database: ${error.message}`, "error");
-            } finally {
-                hideLoader();
-            }
-        };
-
+        try {
+            showLoader();
+            await DB.addOrder(newOrder);
+            orderForm.reset();
+            showToast('Order added successfully!');
+            await refreshData();
+        } catch (error) {
+            console.error(error);
+            showToast(`Error: ${error.message}`, "error");
+        } finally {
+            hideLoader();
+        }
+    };
         const addOrder = async (e) => {
             e.preventDefault();
             
